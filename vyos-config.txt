@@ -1,0 +1,6 @@
+Enter here commands list or URL
+
+set xxx xxx xxx
+set xxx xxx xxx 'yyy'
+OR
+http://192.0.2.1/vyos-commands.txt
