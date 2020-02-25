@@ -1,0 +1,35 @@
+#!ipxe
+
+# configure URLs to server directory with VyOS kernel, initramfs and filesystem
+set vyos_boot_url http://192.0.2.1/ipxe/vyos-ipxe/
+# Enable or disable loading configuration via Cloud-init immediately after startup
+set cloud_init true
+
+
+# DO NOT EDIT ANYTHING ELSE BELOW THIS LINE
+
+# configure paths to required components, according to server URL
+set initrd_url ${vyos_boot_url}bootfiles/initrd.img
+set vmlinuz_url ${vyos_boot_url}bootfiles/vmlinuz
+set filesys_url ${vyos_boot_url}bootfiles/filesystem.squashfs
+
+# Configure initrd path and common kernel options
+initrd ${initrd_url}
+set kernel_common net.ifnames=0 boot=live nopersistence noautologin union=overlay ip=frommedia fetch=${filesys_url}
+# configure Cloud-init user-data and disable network-config (e2NvbmZpZzogZGlzYWJsZWR9Cg== is {config: disabled} encoded with base64)
+iseq ${cloud_init} true && set kernel_common ${kernel_common} ds=nocloud-net;s=${vyos_boot_url}cloud-init/ network-config=e2NvbmZpZzogZGlzYWJsZWR9Cg== ||
+
+# Show menu
+menu Choose VyOS boot option
+item vyos_kvm VyOS (KVM console)
+item vyos_serial VyOS (Serial console)
+choose --default vyos_kvm --timeout 5000 target && goto ${target}
+
+# Load VyOS
+:vyos_kvm
+kernel ${vmlinuz_url} ${kernel_common} console=ttyS0 console=tty0
+boot
+
+:vyos_serial
+kernel ${vmlinuz_url} ${kernel_common} console=tty0 console=ttyS0
+boot

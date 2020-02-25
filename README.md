@@ -74,3 +74,7 @@ Add to the instance User data your generated User-Data as text.
 ### Exoscale
 
 Add to the instance User Data your generated User-Data.
+
+### With PXE boot
+
+See the instruction in the [pxe folder](pxe/README.md).
