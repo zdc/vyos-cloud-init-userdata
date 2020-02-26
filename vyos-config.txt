@@ -1,6 +1,13 @@
-Enter here commands list or URL
+Place here a complete configuration, commands list or URL
+
+xxx {
+}
+
+OR
 
 set xxx xxx xxx
 set xxx xxx xxx 'yyy'
+
 OR
-http://192.0.2.1/vyos-commands.txt
+
+http://192.0.2.1/vyos-config.txt

@@ -9,9 +9,26 @@ You need to have Python3 and write-mime-multipart script installed. If you do no
 wget https://git.launchpad.net/cloud-utils/plain/bin/write-mime-multipart
 ```
 
-### Configuration syntax
+## User-Data configuration syntax
 
-All configuration commands MUST be entered according to the next rules:
+The part-handler support three types of User-Data:
+
+ - URL
+ - complete VyOS configuration
+ - list of configuration commands
+
+### URL
+You may place a text file with configuration file or commands list to an HTTP server, available to a deployed instance during startup. In this case, inside the `vyos-config.txt` file you need to enter only the direct URL of this file. We strongly recommend using unencrypted HTTP and IP address as a target URL to avoid problems with DNS and certificates.
+
+### Complete configuration
+
+You may provide a complete configuration file inside User-Data. The file MUST be exactly in the same format, as VyOS save. You may simply copy the `/config/config.boot` file content of preconfigured VyOS to be sure. We do not recommend using MAC addresses to interface name binding inside the config (the `hw-id` option) if you are not pretty sure that you need this.
+
+If the complete configuration file will be provided, the VyOS startup configuration will be fully replaced by them.
+
+### Commands list
+
+If you need to configure not very many options, you may enter commands directly to the `vyos-config.txt` file. All configuration commands MUST be entered according to the next rules:
 
  - one command per line
  - no empty lines allowed
@@ -26,12 +43,6 @@ And copy wanted commands from the output.
 
 You have two options on how to provide configuration commands:
 
-### Commands list
-If you need to configure not very many options, you may enter commands directly to the `vyos-config.txt` file.
-
-### URL
-You may place a text file with commands to an HTTP server, available to a deployed instance during startup. In this case, inside the `vyos-config.txt` file you need to enter only the direct URL of this file. We strongly recommend using unencrypted HTTP and IP address as a target URL to avoid problems with DNS and certificates.
-
 ## Creating User-Data
 
 When your commands list will be prepared, you need to convert it to the User-Data format. Use the next command for this:
@@ -40,6 +51,22 @@ When your commands list will be prepared, you need to convert it to the User-Dat
 python3 write-mime-multipart vyos-handler.py vyos-config.txt
 ```
 All the output is your User-Data, which should be used during startup.
+
+## Multiple tasks
+
+You may apply multiple tasks via User-Data. For example, can be created three files:
+
+`vyos-config1.txt` - with URL to the file with the complete configuration
+
+`vyos-config2.txt` - with URL to the file with a commands list
+
+`vyos-config3.txt` - with a commands list
+
+And they all can be combined with:
+```
+python3 write-mime-multipart vyos-handler.py vyos-config1.txt vyos-config2.txt vyos-config3.txt
+```
+During the boot, VyOS will apply all of them in sequence.
 
 ## Troubleshooting
 

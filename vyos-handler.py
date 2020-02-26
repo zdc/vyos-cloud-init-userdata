@@ -83,20 +83,39 @@ def mark_tag(config, node_path, tag_nodes):
             logger.debug("Marking node as tag: \"{}\"".format(current_node_path))
             config.set_tag(current_node_path)
 
-# get configuration commands
-def get_config_commands(payload):
+# get payload from URL
+def download_payload(payload):
+    # try to download from URL
+    try:
+        logger.info("Trying to fetch payload from URL: {}".format(payload))
+        return requests.get(payload).text
+    # return raw data if this was not URL
+    except Exception as err:
+        logger.error("Failed to downloads payload from URL: {}".format(err))
+
+# check what kind of user-data payload is - config file, commands list or URL
+def check_payload_format(payload):
+    # prepare regex for parsing
     regex_url = re.compile('https?://[\w\.\:]+/.*$')
-    if regex_url.search(payload.strip()):
-        # try to download commands from URL
+    regex_cmdlist = re.compile('^set ([^\']+)( \'(.*)\')*')
+    regex_cmdfile = re.compile('^[\w-]+ {.*')
+
+    if regex_cmdfile.search(payload.strip()):
+        # try to parse as configuration file
         try:
-            logger.info("Trying to fetch commands from URL: {}".format(payload))
-            return requests.get(payload.strip()).text
-        # return raw data if this was not URL
+            payload_config = ConfigTree(payload)
+            logger.debug("User-Data payload is VyOS configuration file")
+            return 'vyos_config_file'
         except Exception as err:
-            logger.error("Failed to downloads commands from URL:{}".format(err))
+            logger.debug("User-Data payload is not valid VyOS configuration file: {}".format(err))
+    elif regex_cmdlist.search(payload.strip()):
+        logger.debug("User-Data payload is VyOS commands list")
+        return 'vyos_config_commands'
+    elif regex_url.search(payload.strip()):
+        logger.debug("User-Data payload is URL")
+        return 'vyos_config_url'
     else:
-        logger.info("Payload is not URL, processing as commands list")
-        return payload
+        logger.error("User-Data payload format cannot be detected")
 
 def list_types():
     # return a list of mime-types that are handled by this module
@@ -112,6 +131,15 @@ def handle_part(data,ctype,filename,payload,frequency):
     #            this is either 'per-instance' or 'always'.  'per-instance'
     #            will be invoked only on the first boot.  'always' will
     #            will be called on subsequent boots.
+
+    if ctype == "__begin__":
+        logger.info("VyOS configuration handler for Cloud-init is beginning, frequency={}".format(frequency))
+        return
+    if ctype == "__end__":
+        logger.info("VyOS configuration handler for Cloud-initis is ending, frequency={}".format(frequency))
+        return
+
+    logger.info("==== received ctype=%s filename=%s ====" % (ctype,filename))
 
     # prepare for VyOS config
     cfg_file_name = '/opt/vyatta/etc/config/config.boot'
@@ -129,36 +157,56 @@ def handle_part(data,ctype,filename,payload,frequency):
     except Exception as err:
         logger.error("Failed to load configuration file: {}".format(err))
 
-    if ctype == "__begin__":
-        logger.info("VyOS configuration handler for Cloud-init is beginning, frequency={}".format(frequency))
-        return
-    if ctype == "__end__":
-        logger.info("VyOS configuration handler for Cloud-initis is ending, frequency={}".format(frequency))
-        return
-
-    logger.info("==== received ctype=%s filename=%s ====" % (ctype,filename))
     try:
-        # get configuration commands
-        config_lines = get_config_commands(payload).splitlines()
-        # get all tag nodes. We should do this here and keep the result to avoid multiple command invoking
-        tag_nodes = get_tag_nodes()
-        # roll through configration commands
-        for line in config_lines:
-            # convert command to format, appliable to configuration
-            command = string_to_command(line)
-            # if conversion is successful, apply the command
-            if command != None:
-                logger.debug("Configuring command: \"{}\"".format(line))
-                config.set(command['cmd_path'], command['cmd_value'], replace=True)
-                # mark configured nodes as tag, if this is necessary
-                mark_tag(config, command['cmd_path'], tag_nodes)
-    except Exception as err:
-        logger.error("Failed to configure system: {}".format(err))
+        # detect payload format
+        payload_format = check_payload_format(payload)
+        if payload_format == 'vyos_config_url':
+            # download and replace payload by content from server
+            payload = download_payload(payload.strip())
+            if payload:
+                payload_format = check_payload_format(payload)
 
-    try:
-        with open(config_file_path, 'w') as f:
-            f.write(config.to_string())
+        # try to replace configuration file with new one
+        if payload_format == 'vyos_config_file':
+            try:
+                with open(config_file_path, 'w') as f:
+                    f.write(payload)
+            except Exception as err:
+                logger.error("Failed to save configuration file: {}".format(err))
+
+        # apply commands to the current configuration file
+        elif payload_format == 'vyos_config_commands':
+            try:
+                # get configuration commands
+                config_lines = payload.splitlines()
+                # get all tag nodes. We should do this here and keep the result to avoid multiple command invoking
+                tag_nodes = get_tag_nodes()
+                # roll through configration commands
+                for line in config_lines:
+                    # convert command to format, appliable to configuration
+                    command = string_to_command(line)
+                    # if conversion is successful, apply the command
+                    if command != None:
+                        logger.debug("Configuring command: \"{}\"".format(line))
+                        config.set(command['cmd_path'], command['cmd_value'], replace=True)
+                        # mark configured nodes as tag, if this is necessary
+                        mark_tag(config, command['cmd_path'], tag_nodes)
+            except Exception as err:
+                logger.error("Failed to configure system: {}".format(err))
+
+            try:
+                with open(config_file_path, 'w') as f:
+                    f.write(config.to_string())
+            except Exception as err:
+                logger.error("Failed to save configuration file: {}".format(err))
+
+        # skip configuration change
+        else:
+            logger.debug("No valid configuration provided. Skipping configuration change")
+            return
+
     except Exception as err:
-        logger.error("Failed to save configuration file: {}".format(err))
+        logger.error("User-Data payload format detection error: {}".format(err))
+        return
 
     logger.info("==== end ctype=%s filename=%s" % (ctype, filename))
