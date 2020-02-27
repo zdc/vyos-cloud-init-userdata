@@ -2,6 +2,20 @@
 
 You may use Cloud-init User-Data to provide any custom configuration to a VyOS instance during deployment.
 
+## Quick and easy way
+
+If an instance has access to the Internet during deployment, you may fill User-Data field with:
+```
+#include-once
+https://raw.githubusercontent.com/zdc/vyos-cloud-init-userdata/master/vyos-handler.py
+http://192.0.2.1/vyos-config.txt
+```
+where `http://192.0.2.1/vyos-config.txt` is URL to the file with content, supported by part-handler (see details below).
+
+Also, you may serve the `vyos-handler.py` at your own HTTP server in the same way, if the Internet is not available or DNS does not work at the deployment stage.
+
+If your instance cannot use the HTTP server as a configuration source, or you want to provide the whole configuration directly inside the User-Data, you need to prepare it according to the information provided below.
+
 ## Preparation
 
 You need to have Python3 and write-mime-multipart script installed. If you do not have installed Cloud-init, you may fetch write-mime-multipart from the cloud-utils repository:

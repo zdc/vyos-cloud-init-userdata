@@ -119,7 +119,7 @@ def check_payload_format(payload):
 
 def list_types():
     # return a list of mime-types that are handled by this module
-    return(["text/plain", "text/go-cubs-go"])
+    return(["text/plain", "text/go-cubs-go", "text/x-not-multipart"])
 
 def handle_part(data,ctype,filename,payload,frequency):
     # data: the cloudinit object

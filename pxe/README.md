@@ -19,7 +19,7 @@ You will need:
      - `vyos-ipxe/vyos-ipxe.txt` - set URL to the `vyos-ipxe` folder and enable or disable Cloud-init;
      **Also, if Cloud-init enabled:**
      - `vyos-ipxe/cloud-init/vyos-config.txt` - add complete configuration file, commands list or URL to any of them to this file;
-     - `vyos-ipxe/cloud-init/user-data` - set URL to the `vyos-config.txt` file
+     - `vyos-ipxe/cloud-init/user-data` - set URLs to `vyos-handler.py` and `vyos-config.txt` files;
  4. Copy to the `vyos-ipxe/bootfiles/` folder all files, required for PXE boot ([check details here](vyos-ipxe/bootfiles/README.md)).
  5. Configure your DHCP server to provide information about boot options inside DHCP answers.
  6. Copy the `undionly.kpxe` file into the root of your TFTP server. You may get this file from the [official site](http://boot.ipxe.org/undionly.kpxe) or Debian [ipxe package](https://packages.debian.org/buster/ipxe).
