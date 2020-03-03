@@ -171,6 +171,7 @@ def handle_part(data,ctype,filename,payload,frequency):
             try:
                 with open(config_file_path, 'w') as f:
                     f.write(payload)
+                logger.debug("Configuration saved to the file: {}".format(config_file_path))
             except Exception as err:
                 logger.error("Failed to save configuration file: {}".format(err))
 
@@ -197,6 +198,7 @@ def handle_part(data,ctype,filename,payload,frequency):
             try:
                 with open(config_file_path, 'w') as f:
                     f.write(config.to_string())
+                logger.debug("Configuration saved to the file: {}".format(config_file_path))
             except Exception as err:
                 logger.error("Failed to save configuration file: {}".format(err))
 

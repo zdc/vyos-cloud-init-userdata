@@ -104,6 +104,14 @@ During the boot, VyOS will apply all of them in sequence.
 
 ## Usage
 
+### VMware ESXi
+
+Generate a User-Data with:
+```
+python3 write-mime-multipart vyos-handler.py vyos-config.txt -z | base64 -w 0
+```
+And paste it to the User-Data field during OVA template deployment. Do not forget about a size limit - it is better to check a User-Data size with `| wc -c` before adding it to the instance.
+
 ### Google Cloud Engine
 
 Add to the instance Metadata key "user-data" with generated User-Data as value.
