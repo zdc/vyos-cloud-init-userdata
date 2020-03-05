@@ -1,0 +1,263 @@
+From ec4a04c047166e47c7de184be526cc1e84966697 Mon Sep 17 00:00:00 2001
+From: zsdc <taras@vyos.io>
+Date: Thu, 5 Mar 2020 18:07:23 +0200
+Subject: [PATCH] vyos_handler.py integration
+
+---
+ cloudinit/handlers/__init__.py     |   2 +
+ cloudinit/handlers/vyos_handler.py | 209 +++++++++++++++++++++++++++++
+ cloudinit/stages.py                |   2 +
+ 3 files changed, 213 insertions(+)
+ create mode 100755 cloudinit/handlers/vyos_handler.py
+
+diff --git a/cloudinit/handlers/__init__.py b/cloudinit/handlers/__init__.py
+index a409ff8a..1101915c 100644
+--- a/cloudinit/handlers/__init__.py
++++ b/cloudinit/handlers/__init__.py
+@@ -51,6 +51,8 @@ INCLUSION_TYPES_MAP = {
+     '#cloud-config-archive': 'text/cloud-config-archive',
+     '#cloud-config-jsonp': 'text/cloud-config-jsonp',
+     '## template: jinja': 'text/jinja2',
++    '#vyos-config-plain': 'text/plain',
++    '#vyos-config-notmulti': 'text/x-not-multipart',
+ }
+ 
+ # Sorted longest first
+diff --git a/cloudinit/handlers/vyos_handler.py b/cloudinit/handlers/vyos_handler.py
+new file mode 100755
+index 00000000..ce5eceec
+--- /dev/null
++++ b/cloudinit/handlers/vyos_handler.py
+@@ -0,0 +1,209 @@
++#part-handler
++# Copyright (C) 2020 Sentrium S.L.
++
++from cloudinit import handlers
++from cloudinit import log as logging
++from cloudinit.settings import (PER_ALWAYS)
++
++# VyOS specific imports
++import re
++import requests
++from pathlib import Path
++from vyos.configtree import ConfigTree
++
++# configure logging
++logger = logging.getLogger(__name__)
++logger.setLevel(logging.DEBUG)
++
++class VyOSConfigPartHandler(handlers.Handler):
++
++    # actually, these prefixes do not use, but due to an internal Cloud-init structure we need to define them here
++    prefixes = [ "#vyos-config-plain", "#vyos-config-notmulti" ]
++
++    def __init__(self, paths, **_kwargs):
++        handlers.Handler.__init__(self, PER_ALWAYS, version=3)
++
++
++    # helper: convert line to command
++    def string_to_command(self, stringcmd):
++        regex_filter = re.compile('^set (?P<cmd_path>[^\']+)( \'(?P<cmd_value>.*)\')*$')
++        if regex_filter.search(stringcmd):
++            # command structure
++            command = {
++                'cmd_path': regex_filter.search(stringcmd).group('cmd_path').split(),
++                'cmd_value': regex_filter.search(stringcmd).group('cmd_value')
++            }
++            return command
++        else:
++            return None
++
++    # get list of all tag nodes
++    def get_tag_nodes(self):
++        try:
++            logger.debug("Searching for tag nodes in configuration templates")
++            tags_nodes = []
++            templates_dir = '/opt/vyatta/share/vyatta-cfg/templates/'
++            tags_path = Path(templates_dir).rglob('node.tag')
++            for tag_path in tags_path:
++                current_tag_path = tag_path.relative_to(templates_dir).parent.parts
++                tags_nodes.append(current_tag_path)
++            return tags_nodes
++        except Exception as err:
++            logger.error("Failed to find tag nodes: {}".format(err))
++
++    # helper: check if the node is tag or not
++    def is_tag_node(self, node_path, tag_nodes):
++        match = False
++        for tag_node in tag_nodes:
++            if len(tag_node) == len(node_path):
++                for element_id in list(range(len(node_path))):
++                    if not ( node_path[element_id] == tag_node[element_id] or tag_node[element_id] == 'node.tag' ):
++                        break
++                    elif ( node_path[element_id] == tag_node[element_id] or tag_node[element_id] == 'node.tag' ) and element_id == len(node_path)-1:
++                        match = True
++            if match == True:
++                break
++        if match == True:
++            logger.debug("Node {} is a tag node".format(node_path))
++            return True
++        else:
++            logger.debug("Node {} is not a tag node".format(node_path))
++            return False
++
++    # helper: mark nodes as tag, if this is necessary
++    def mark_tag(self, config, node_path, tag_nodes):
++        current_node_path = []
++        for current_node in node_path:
++            current_node_path.append(current_node)
++            if self.is_tag_node(current_node_path, tag_nodes):
++                logger.debug("Marking node as tag: \"{}\"".format(current_node_path))
++                config.set_tag(current_node_path)
++
++    # get payload from URL
++    def download_payload(self, payload):
++        # try to download from URL
++        try:
++            logger.info("Trying to fetch payload from URL: {}".format(payload))
++            return requests.get(payload).text
++        # return raw data if this was not URL
++        except Exception as err:
++            logger.error("Failed to downloads payload from URL: {}".format(err))
++
++    # check what kind of user-data payload is - config file, commands list or URL
++    def check_payload_format(self, payload):
++        # prepare regex for parsing
++        regex_url = re.compile('https?://[\w\.\:]+/.*$')
++        regex_cmdlist = re.compile('^set ([^\']+)( \'(.*)\')*')
++        regex_cmdfile = re.compile('^[\w-]+ {.*')
++
++        if regex_cmdfile.search(payload.strip()):
++            # try to parse as configuration file
++            try:
++                payload_config = ConfigTree(payload)
++                logger.debug("User-Data payload is VyOS configuration file")
++                return 'vyos_config_file'
++            except Exception as err:
++                logger.debug("User-Data payload is not valid VyOS configuration file: {}".format(err))
++        elif regex_cmdlist.search(payload.strip()):
++            logger.debug("User-Data payload is VyOS commands list")
++            return 'vyos_config_commands'
++        elif regex_url.search(payload.strip()):
++            logger.debug("User-Data payload is URL")
++            return 'vyos_config_url'
++        else:
++            logger.error("User-Data payload format cannot be detected")
++
++    def handle_part(self, data, ctype, filename, payload, frequency, headers):
++        if ctype == "__begin__":
++            logger.info("VyOS configuration handler for Cloud-init is beginning, frequency={}".format(frequency))
++            return
++        if ctype == "__end__":
++            logger.info("VyOS configuration handler for Cloud-initis is ending, frequency={}".format(frequency))
++            return
++
++        logger.info("==== received ctype=%s filename=%s ====" % (ctype,filename))
++
++        try:
++            # detect payload format
++            payload_format = self.check_payload_format(payload)
++            if payload_format == 'vyos_config_url':
++                # download and replace payload by content from server
++                payload = self.download_payload(payload.strip())
++                if payload:
++                    payload_format = self.check_payload_format(payload)
++
++            # prepare for VyOS config
++            cfg_file_name = '/opt/vyatta/etc/config/config.boot'
++            bak_file_name = '/opt/vyatta/etc/config.boot.default'
++            if not Path(cfg_file_name).exists():
++                config_file_path = bak_file_name
++            else:
++                config_file_path = cfg_file_name
++
++            try:
++                with open(config_file_path, 'r') as f:
++                    config_file_data = f.read()
++                config = ConfigTree(config_file_data)
++                logger.debug("Using configuration file: {}".format(config_file_path))
++            except Exception as err:
++                logger.error("Failed to load configuration file: {}".format(err))
++
++            # try to replace configuration file with new one
++            if payload_format == 'vyos_config_file':
++                try:
++                    with open(config_file_path, 'w') as f:
++                        f.write(payload)
++                    logger.debug("Configuration saved to the file: {}".format(config_file_path))
++                except Exception as err:
++                    logger.error("Failed to save configuration file: {}".format(err))
++
++            # apply commands to the current configuration file
++            elif payload_format == 'vyos_config_commands':
++                try:
++                    # get configuration commands
++                    config_lines = payload.splitlines()
++                    # get all tag nodes. We should do this here and keep the result to avoid multiple command invoking
++                    tag_nodes = self.get_tag_nodes()
++                    # roll through configration commands
++                    for line in config_lines:
++                        # convert command to format, appliable to configuration
++                        command = self.string_to_command(line)
++                        # if conversion is successful, apply the command
++                        if command != None:
++                            logger.debug("Configuring command: \"{}\"".format(line))
++                            config.set(command['cmd_path'], command['cmd_value'], replace=True)
++                            # mark configured nodes as tag, if this is necessary
++                            self.mark_tag(config, command['cmd_path'], tag_nodes)
++                except Exception as err:
++                    logger.error("Failed to configure system: {}".format(err))
++
++                try:
++                    with open(config_file_path, 'w') as f:
++                        f.write(config.to_string())
++                    logger.debug("Configuration saved to the file: {}".format(config_file_path))
++                except Exception as err:
++                    logger.error("Failed to save configuration file: {}".format(err))
++
++            # skip configuration change
++            else:
++                logger.debug("No valid configuration provided. Skipping configuration change")
++                return
++
++        except Exception as err:
++            logger.error("User-Data payload format detection error: {}".format(err))
++            return
++
++        logger.info("==== end ctype=%s filename=%s" % (ctype, filename))
++
++
++# part for using in part-handler mode
++handler_version = 2
++
++def list_types():
++    # return a list of mime-types that are handled by this module
++    return(["text/plain", "text/x-not-multipart"])
++
++def handle_part(data, ctype, filename, payload, frequency):
++    # pass to VyOSConfigPartHandler class
++    part_handler = VyOSConfigPartHandler(None)
++    part_handler.handle_part(data, ctype, filename, payload, frequency, None)
+diff --git a/cloudinit/stages.py b/cloudinit/stages.py
+index db8ba64c..e5419275 100644
+--- a/cloudinit/stages.py
++++ b/cloudinit/stages.py
+@@ -20,6 +20,7 @@ from cloudinit.handlers.cloud_config import CloudConfigPartHandler
+ from cloudinit.handlers.jinja_template import JinjaTemplatePartHandler
+ from cloudinit.handlers.shell_script import ShellScriptPartHandler
+ from cloudinit.handlers.upstart_job import UpstartJobPartHandler
++from cloudinit.handlers.vyos_handler import VyOSConfigPartHandler
+ 
+ from cloudinit.event import EventType
+ from cloudinit.sources import NetworkConfigSource
+@@ -420,6 +421,7 @@ class Init(object):
+             shellscript_handler,
+             BootHookPartHandler(**opts),
+             UpstartJobPartHandler(**opts),
++            VyOSConfigPartHandler(**opts),
+         ]
+         opts.update(
+             {'sub_handlers': [cloudconfig_handler, shellscript_handler]})
+-- 
+2.17.1
+

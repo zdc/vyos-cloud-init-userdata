@@ -7,7 +7,7 @@ You may use Cloud-init User-Data to provide any custom configuration to a VyOS i
 If an instance has access to the Internet during deployment, you may fill User-Data field with:
 ```
 #include-once
-https://raw.githubusercontent.com/zdc/vyos-cloud-init-userdata/master/vyos-handler.py
+https://raw.githubusercontent.com/zdc/vyos-cloud-init-userdata/master/vyos_handler.py
 http://192.0.2.1/vyos-config.txt
 ```
 where `http://192.0.2.1/vyos-config.txt` is URL to the file with content, supported by part-handler (see details below).
@@ -99,7 +99,7 @@ During the boot, VyOS will apply all of them in sequence.
   ```
 - If something does not work as expected, you may catch logs from the instance after deployment with:
   ```
-  sudo journalctl | grep -E 'part-handler-000|cloud-init'
+  cat /var/log/cloud-init.log | tee
   ```
 
 ## Usage
@@ -127,3 +127,8 @@ Add to the instance User Data your generated User-Data.
 ### With PXE boot
 
 See the instruction in the [pxe folder](pxe/README.md).
+
+
+## Integration into Cloud-init package
+
+Instruction can be found [here](cloud-init/README.md).
