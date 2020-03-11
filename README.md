@@ -12,7 +12,7 @@ http://192.0.2.1/vyos-config.txt
 ```
 where `http://192.0.2.1/vyos-config.txt` is URL to the file with content, supported by part-handler (see details below).
 
-Also, you may serve the `vyos-handler.py` at your own HTTP server in the same way, if the Internet is not available or DNS does not work at the deployment stage.
+Also, you may serve the `vyos_handler.py` at your own HTTP server in the same way, if the Internet is not available or DNS does not work at the deployment stage.
 
 If your instance cannot use the HTTP server as a configuration source, or you want to provide the whole configuration directly inside the User-Data, you need to prepare it according to the information provided below.
 
@@ -62,7 +62,7 @@ You have two options on how to provide configuration commands:
 When your commands list will be prepared, you need to convert it to the User-Data format. Use the next command for this:
 
 ```
-python3 write-mime-multipart vyos-handler.py vyos-config.txt
+python3 write-mime-multipart vyos_handler.py vyos-config.txt
 ```
 All the output is your User-Data, which should be used during startup.
 
@@ -78,7 +78,7 @@ You may apply multiple tasks via User-Data. For example, can be created three fi
 
 And they all can be combined with:
 ```
-python3 write-mime-multipart vyos-handler.py vyos-config1.txt vyos-config2.txt vyos-config3.txt
+python3 write-mime-multipart vyos_handler.py vyos-config1.txt vyos-config2.txt vyos-config3.txt
 ```
 During the boot, VyOS will apply all of them in sequence.
 
@@ -86,16 +86,16 @@ During the boot, VyOS will apply all of them in sequence.
 
 - User-Data maximum size is ~16384 bytes. You need to be sure that your User-Data is inside this limit. We recommend you to switch to the HTTP URL in case if your User-Data is 15000 bytes or more, to avoid any problems. To get the size of User-Data you may use the next command:
   ```
-  python3 write-mime-multipart vyos-handler.py vyos-config.txt | wc -c
+  python3 write-mime-multipart vyos_handler.py vyos-config.txt | wc -c
   ```
   The output will be the size.
   Some deployments cannot use HTTP sources, but able to fetch User-Data from a local file. You may try to compress it to gzip archive:
   ```
-  python3 write-mime-multipart vyos-handler.py vyos-config.txt -z > user-data.gz
+  python3 write-mime-multipart vyos_handler.py vyos-config.txt -z > user-data.gz
   ```
 - Some of the clouds (for example AWS) and hypervisors can use gzipped User-Data, encoded with base64. You may get it with:
   ```
-  python3 write-mime-multipart vyos-handler.py vyos-config.txt -z | base64
+  python3 write-mime-multipart vyos_handler.py vyos-config.txt -z | base64
   ```
 - If something does not work as expected, you may catch logs from the instance after deployment with:
   ```
@@ -108,7 +108,7 @@ During the boot, VyOS will apply all of them in sequence.
 
 Generate a User-Data with:
 ```
-python3 write-mime-multipart vyos-handler.py vyos-config.txt -z | base64 -w 0
+python3 write-mime-multipart vyos_handler.py vyos-config.txt -z | base64 -w 0
 ```
 And paste it to the User-Data field during OVA template deployment. Do not forget about a size limit - it is better to check a User-Data size with `| wc -c` before adding it to the instance.
 
