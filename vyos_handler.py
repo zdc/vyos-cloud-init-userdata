@@ -89,6 +89,15 @@ class VyOSConfigPartHandler(handlers.Handler):
         except Exception as err:
             logger.error("Failed to downloads payload from URL: {}".format(err))
 
+    # write file
+    def write_file(self, file_path, content):
+        try:
+            with open(file_path, 'w') as f:
+                f.write(content)
+            logger.info("Configuration saved to the file: {}".format(file_path))
+        except Exception as err:
+            logger.error("Failed to save configuration file: {}".format(err))
+
     # check what kind of user-data payload is - config file, commands list or URL
     def check_payload_format(self, payload):
         # prepare regex for parsing
@@ -100,16 +109,16 @@ class VyOSConfigPartHandler(handlers.Handler):
             # try to parse as configuration file
             try:
                 payload_config = ConfigTree(payload)
-                logger.debug("User-Data payload is VyOS configuration file")
+                logger.info("Parsing User-Data payload as VyOS configuration file")
                 if payload_config:
                     return 'vyos_config_file'
             except Exception as err:
-                logger.debug("User-Data payload is not valid VyOS configuration file: {}".format(err))
+                logger.error("User-Data payload is not valid VyOS configuration file: {}".format(err))
         elif regex_cmdlist.search(payload.strip()):
-            logger.debug("User-Data payload is VyOS commands list")
+            logger.info("User-Data payload is VyOS commands list")
             return 'vyos_config_commands'
         elif regex_url.search(payload.strip()):
-            logger.debug("User-Data payload is URL")
+            logger.info("User-Data payload is URL")
             return 'vyos_config_url'
         else:
             logger.error("User-Data payload format cannot be detected")
@@ -133,7 +142,7 @@ class VyOSConfigPartHandler(handlers.Handler):
                 if payload:
                     payload_format = self.check_payload_format(payload)
 
-            # prepare for VyOS config
+            # find path for VyOS config
             cfg_file_name = '/opt/vyatta/etc/config/config.boot'
             bak_file_name = '/opt/vyatta/etc/config.boot.default'
             if not Path(cfg_file_name).exists():
@@ -141,25 +150,21 @@ class VyOSConfigPartHandler(handlers.Handler):
             else:
                 config_file_path = cfg_file_name
 
-            try:
-                with open(config_file_path, 'r') as f:
-                    config_file_data = f.read()
-                config = ConfigTree(config_file_data)
-                logger.debug("Using configuration file: {}".format(config_file_path))
-            except Exception as err:
-                logger.error("Failed to load configuration file: {}".format(err))
-
             # try to replace configuration file with new one
             if payload_format == 'vyos_config_file':
-                try:
-                    with open(config_file_path, 'w') as f:
-                        f.write(payload)
-                    logger.debug("Configuration saved to the file: {}".format(config_file_path))
-                except Exception as err:
-                    logger.error("Failed to save configuration file: {}".format(err))
+                self.write_file(config_file_path, payload)
 
             # apply commands to the current configuration file
             elif payload_format == 'vyos_config_commands':
+                # load local configuration file
+                try:
+                    with open(config_file_path, 'r') as f:
+                        config_file_data = f.read()
+                    config = ConfigTree(config_file_data)
+                    logger.info("Using configuration file: {}".format(config_file_path))
+                except Exception as err:
+                    logger.error("Failed to load configuration file: {}".format(err))
+
                 try:
                     # get configuration commands
                     config_lines = payload.splitlines()
@@ -178,16 +183,11 @@ class VyOSConfigPartHandler(handlers.Handler):
                 except Exception as err:
                     logger.error("Failed to configure system: {}".format(err))
 
-                try:
-                    with open(config_file_path, 'w') as f:
-                        f.write(config.to_string())
-                    logger.debug("Configuration saved to the file: {}".format(config_file_path))
-                except Exception as err:
-                    logger.error("Failed to save configuration file: {}".format(err))
+                self.write_file(config_file_path, config.to_string())
 
             # skip configuration change
             else:
-                logger.debug("No valid configuration provided. Skipping configuration change")
+                logger.info("No valid configuration provided. Skipping configuration change")
                 return
 
         except Exception as err:
