@@ -15,18 +15,18 @@ from vyos.configtree import ConfigTree
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)
 
+
 class VyOSConfigPartHandler(handlers.Handler):
 
     # actually, these prefixes do not use, but due to an internal Cloud-init structure we need to define them here
-    prefixes = [ "#vyos-config-plain", "#vyos-config-notmulti" ]
+    prefixes = ["#vyos-config-plain", "#vyos-config-notmulti"]
 
     def __init__(self, paths, **_kwargs):
         handlers.Handler.__init__(self, PER_ALWAYS, version=3)
 
-
     # helper: convert line to command
     def string_to_command(self, stringcmd):
-        regex_filter = re.compile('^set (?P<cmd_path>[^\']+)( \'(?P<cmd_value>.*)\')*$')
+        regex_filter = re.compile(r'^set (?P<cmd_path>[^\']+)( \'(?P<cmd_value>.*)\')*$')
         if regex_filter.search(stringcmd):
             # command structure
             command = {
@@ -57,13 +57,13 @@ class VyOSConfigPartHandler(handlers.Handler):
         for tag_node in tag_nodes:
             if len(tag_node) == len(node_path):
                 for element_id in list(range(len(node_path))):
-                    if not ( node_path[element_id] == tag_node[element_id] or tag_node[element_id] == 'node.tag' ):
+                    if not (node_path[element_id] == tag_node[element_id] or tag_node[element_id] == 'node.tag'):
                         break
-                    elif ( node_path[element_id] == tag_node[element_id] or tag_node[element_id] == 'node.tag' ) and element_id == len(node_path)-1:
+                    elif (node_path[element_id] == tag_node[element_id] or tag_node[element_id] == 'node.tag') and element_id == len(node_path) - 1:
                         match = True
-            if match == True:
+            if match is True:
                 break
-        if match == True:
+        if match is True:
             logger.debug("Node {} is a tag node".format(node_path))
             return True
         else:
@@ -92,16 +92,17 @@ class VyOSConfigPartHandler(handlers.Handler):
     # check what kind of user-data payload is - config file, commands list or URL
     def check_payload_format(self, payload):
         # prepare regex for parsing
-        regex_url = re.compile('https?://[\w\.\:]+/.*$')
-        regex_cmdlist = re.compile('^set ([^\']+)( \'(.*)\')*')
-        regex_cmdfile = re.compile('^[\w-]+ {.*')
+        regex_url = re.compile(r'https?://[\w\.\:]+/.*$')
+        regex_cmdlist = re.compile(r'^set ([^\']+)( \'(.*)\')*')
+        regex_cmdfile = re.compile(r'^[\w-]+ {.*')
 
         if regex_cmdfile.search(payload.strip()):
             # try to parse as configuration file
             try:
                 payload_config = ConfigTree(payload)
                 logger.debug("User-Data payload is VyOS configuration file")
-                return 'vyos_config_file'
+                if payload_config:
+                    return 'vyos_config_file'
             except Exception as err:
                 logger.debug("User-Data payload is not valid VyOS configuration file: {}".format(err))
         elif regex_cmdlist.search(payload.strip()):
@@ -121,7 +122,7 @@ class VyOSConfigPartHandler(handlers.Handler):
             logger.info("VyOS configuration handler for Cloud-initis is ending, frequency={}".format(frequency))
             return
 
-        logger.info("==== received ctype=%s filename=%s ====" % (ctype,filename))
+        logger.info("==== received ctype=%s filename=%s ====" % (ctype, filename))
 
         try:
             # detect payload format
@@ -169,7 +170,7 @@ class VyOSConfigPartHandler(handlers.Handler):
                         # convert command to format, appliable to configuration
                         command = self.string_to_command(line)
                         # if conversion is successful, apply the command
-                        if command != None:
+                        if command is not None:
                             logger.debug("Configuring command: \"{}\"".format(line))
                             config.set(command['cmd_path'], command['cmd_value'], replace=True)
                             # mark configured nodes as tag, if this is necessary
@@ -199,9 +200,11 @@ class VyOSConfigPartHandler(handlers.Handler):
 # part for using in part-handler mode
 handler_version = 2
 
+
 def list_types():
     # return a list of mime-types that are handled by this module
     return(["text/plain", "text/x-not-multipart"])
+
 
 def handle_part(data, ctype, filename, payload, frequency):
     # pass to VyOSConfigPartHandler class
