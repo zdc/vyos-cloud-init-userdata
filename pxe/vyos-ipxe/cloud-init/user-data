@@ -1,3 +1,4 @@
 #include-once
 http://192.0.2.1/ipxe/vyos-ipxe/cloud-init/vyos_handler.py
 http://192.0.2.1/ipxe/vyos-ipxe/cloud-init/vyos-config.txt
+#http://192.0.2.1/ipxe/vyos-ipxe/cloud-init/vyos-install.txt

@@ -17,3 +17,6 @@ datasource:
 #    max_wait: 120
 #    timeout: 50
 #    strict_id: false
+
+# Disable all config-stage modules as all configuration should be done earlier by part-handler
+cloud_config_modules:

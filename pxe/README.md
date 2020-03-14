@@ -19,7 +19,7 @@ You will need:
      - `vyos-ipxe/vyos-ipxe.txt` - set URL to the `vyos-ipxe` folder and enable or disable Cloud-init;
      **Also, if Cloud-init enabled:**
      - `vyos-ipxe/cloud-init/cloud-config` - configure a datasource for Cloud-init;
-     - `vyos-ipxe/cloud-init/user-data` - set URLs to `vyos-handler.py` and `vyos-config.txt` files;
+     - `vyos-ipxe/cloud-init/user-data` - set URLs to `vyos_handler.py` and `vyos-config.txt` files;
      - `vyos-ipxe/cloud-init/vyos-config.txt` - add complete configuration file, commands list or URL to any of them to this file;
  4. Copy to the `vyos-ipxe/bootfiles/` folder all files, required for PXE boot ([check details here](vyos-ipxe/bootfiles/README.md)).
  5. Configure your DHCP server to provide information about boot options inside DHCP answers.
@@ -30,6 +30,15 @@ You will need:
 ## Booting
 
 Configure your bare-metal server or virtual machine to booting from a network with DHCP address to load into VyOS.
+
+## Installing via PXE
+
+> **WARNING**
+> During installation all data on the selected disk will be deleted!
+
+You also may install VyOS via PXE. To do this, you need additionally:
+- Include `vyos-install.txt` to the `user-data`;
+- Configure variables in the `vyos-install.txt`.
 
 ## Troubleshooting
 

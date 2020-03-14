@@ -1,0 +1,14 @@
+# Install drive (for example, /dev/vda)
+# If configured auto, will be used the first drive with 2G or more size
+# WARNING: ALL DATA ON THIS DRIVE WILL BE DELETED
+# install_drive: /dev/vda
+install_drive: auto
+
+# VyOS partition size
+# Can be configured as percent from overall drive size, or in bytes (2000M, 2G). Cannot be less than 2G
+# partition_size: 2000M
+partition_size: 100%
+
+# Force reboot after install (true / false)
+# After installation the system will be rebooted
+reboot_after: true

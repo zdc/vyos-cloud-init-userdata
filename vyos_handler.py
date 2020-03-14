@@ -8,8 +8,11 @@ from cloudinit.settings import (PER_ALWAYS)
 # VyOS specific imports
 import re
 import requests
+import subprocess
 from pathlib import Path
+from yaml import load
 from vyos.configtree import ConfigTree
+from vyos.version import get_version
 
 # configure logging
 logger = logging.getLogger(__name__)
@@ -94,16 +97,17 @@ class VyOSConfigPartHandler(handlers.Handler):
         try:
             with open(file_path, 'w') as f:
                 f.write(content)
-            logger.info("Configuration saved to the file: {}".format(file_path))
+            logger.info("File saved: {}".format(file_path))
         except Exception as err:
-            logger.error("Failed to save configuration file: {}".format(err))
+            logger.error("Failed to save file: {}".format(err))
 
-    # check what kind of user-data payload is - config file, commands list or URL
+    # check what kind of user-data payload is - config file, commands list, YAML or URL
     def check_payload_format(self, payload):
         # prepare regex for parsing
         regex_url = re.compile(r'https?://[\w\.\:]+/.*$')
         regex_cmdlist = re.compile(r'^set ([^\']+)( \'(.*)\')*')
         regex_cmdfile = re.compile(r'^[\w-]+ {.*')
+        regex_yaml = re.compile(r'^[\w-]+: .*$', re.MULTILINE)
 
         if regex_cmdfile.search(payload.strip()):
             # try to parse as configuration file
@@ -117,11 +121,129 @@ class VyOSConfigPartHandler(handlers.Handler):
         elif regex_cmdlist.search(payload.strip()):
             logger.info("User-Data payload is VyOS commands list")
             return 'vyos_config_commands'
+        elif regex_yaml.search(payload.strip()):
+            logger.info("User-Data payload is YAML")
+            return 'vyos_config_yaml'
         elif regex_url.search(payload.strip()):
             logger.info("User-Data payload is URL")
             return 'vyos_config_url'
         else:
             logger.error("User-Data payload format cannot be detected")
+
+    # run command and return stdout and status
+    def run_command(self, command):
+        try:
+            process = subprocess.Popen(command.split(' '), stdout=subprocess.PIPE, universal_newlines=True)
+            stdout, stderr = process.communicate()
+            if process.returncode == 0:
+                return stdout
+            else:
+                logger.error("The command \"{}\" returned status {}. Error: {}".format(command, process.returncode, stderr))
+                return None
+        except Exception as err:
+            logger.error("Unable to execute command \"{}\": {}".format(command, err))
+            return None
+
+    # install VyOS
+    def install_vyos(self, payload):
+        try:
+            install_config = load(payload)
+        except Exception as err:
+            logger.error("Unable to load YAML file: {}".format(err))
+            return
+        try:
+            # enable output to the stderr
+            from logging import StreamHandler
+            logger.addHandler(StreamHandler())
+
+            # define all variables
+            vyos_version = get_version()
+            install_drive = install_config['install_drive']
+            partition_size = install_config['partition_size']
+            root_drive = '/mnt/wroot'
+            root_read = '/mnt/squashfs'
+            root_install = '/mnt/inst_root'
+            dir_rw = '{}/boot/{}/rw'.format(root_drive, vyos_version)
+            dir_work = '{}/boot/{}/work'.format(root_drive, vyos_version)
+
+            # find and prepare drive and partition
+            regex_lsblk = re.compile(r'^(?P<dev_name>/dev/\w+) +(?P<dev_size>\d+) +(?P<dev_type>\w+)$')
+            if install_drive == 'auto':
+                drive_list = self.run_command('lsblk --bytes --nodeps --list --noheadings --output PATH,SIZE,TYPE')
+                for device_line in drive_list.splitlines():
+                    found = regex_lsblk.search(device_line)
+                    if int(found.group('dev_size')) > 2000000000 and found.group('dev_type') == 'disk':
+                        install_drive = found.group('dev_name')
+                        break
+            if install_drive == 'auto':
+                logger.error("No suitable drive found for installation")
+                return
+            logger.debug("Installing to drive: {}".format(install_drive))
+            self.run_command('parted --script {} mklabel msdos'.format(install_drive))
+            self.run_command('parted --script --align optimal {} mkpart primary 0% {}'.format(install_drive, partition_size))
+            logger.debug("Marking first partition on {} as boot".format(install_drive))
+            self.run_command('parted --script {} set 1 boot on'.format(install_drive))
+
+            partitions_list = self.run_command('lsblk --bytes --list --noheadings --output PATH,SIZE,TYPE {}'.format(install_drive))
+            for partition_line in partitions_list.splitlines():
+                found = regex_lsblk.search(partition_line)
+                if int(found.group('dev_size')) > 1900000000 and found.group('dev_type') == 'part':
+                    root_partition = found.group('dev_name')
+                    break
+            logger.debug("Using partition for root: {}".format(root_partition))
+            self.run_command('mkfs -t ext4 -L persistence {}'.format(root_partition))
+
+            # creating directories
+            for dir in [root_drive, root_read, root_install]:
+                dirpath = Path(dir)
+                logger.debug("Creating directory: {}".format(dir))
+                dirpath.mkdir(mode=0o755, parents=True, exist_ok=True)
+            # mounting root drive
+            logger.debug("Mounting root drive: {}".format(root_drive))
+            self.run_command('mount {} {}'.format(root_partition, root_drive))
+            for dir in [dir_rw, dir_work]:
+                dirpath = Path(dir)
+                logger.debug("Creating directory: {}".format(dir))
+                dirpath.mkdir(mode=0o755, parents=True, exist_ok=True)
+            # copy rootfs
+            logger.debug("Copying rootfs: {}/boot/{}/{}.squashfs".format(root_drive, vyos_version, vyos_version))
+            self.run_command('cp -p /usr/lib/live/mount/medium/live/filesystem.squashfs {}/boot/{}/{}.squashfs'.format(root_drive, vyos_version, vyos_version))
+            # get list of other files for boot and copy to the installation boot directory
+            boot_files = self.run_command('find /boot -maxdepth 1 -type f -o -type l')
+            for file in boot_files.splitlines():
+                logger.debug("Copying file: {}".format(file))
+                self.run_command('cp -dp {} {}/boot/{}/'.format(file, root_drive, vyos_version))
+            # write persistense.conf
+            logger.debug("Writing '{}/persistence.conf".format(root_drive))
+            self.write_file('{}/persistence.conf'.format(root_drive), '/ union\n')
+            # mount new rootfs
+            logger.debug("Mounting read-only rootfs: {}".format(root_read))
+            self.run_command('mount -o loop,ro -t squashfs {}/boot/{}/{}.squashfs {}'.format(root_drive, vyos_version, vyos_version, root_read))
+            logger.debug("Mounting overlay rootfs: {}".format(root_install))
+            self.run_command('mount -t overlay -o noatime,upperdir={},lowerdir={},workdir={} overlay {}'.format(dir_rw, root_read, dir_work, root_install))
+            # copy configuration
+            logger.debug("Copying configuration to: {}/opt/vyatta/etc/config/config.boot".format(root_install))
+            self.run_command('cp -p /opt/vyatta/etc/config/config.boot {}/opt/vyatta/etc/config/config.boot'.format(root_install))
+            logger.debug("Copying .vyatta_config to: {}/opt/vyatta/etc/config/.vyatta_config".format(root_install))
+            self.run_command('cp -p /opt/vyatta/etc/config/.vyatta_config {}/opt/vyatta/etc/config/.vyatta_config'.format(root_install))
+            # install grub
+            logger.debug("Installing GRUB to {}".format(install_drive))
+            self.run_command('grub-install --no-floppy --recheck --root-directory={} {}'.format(root_drive, install_drive))
+            # configure GRUB
+            logger.debug("Configuring GRUB")
+            self.run_command('/opt/vyatta/sbin/vyatta-grub-setup -u {} {} '' {}'.format(vyos_version, root_partition, root_drive))
+            # unmount all fs
+            for dir in [root_install, root_read, root_drive]:
+                logger.debug("Unmounting: {}".format(dir))
+                self.run_command('umount {}'.format(dir))
+            # reboot the system if this was requested by config
+            if install_config['reboot_after'] is True:
+                logger.info("Rebooting host")
+                self.run_command('systemctl reboot')
+
+        except Exception as err:
+            logger.error("Unable to install VyOS: {}".format(err))
+            return
 
     def handle_part(self, data, ctype, filename, payload, frequency, headers):
         if ctype == "__begin__":
@@ -153,6 +275,12 @@ class VyOSConfigPartHandler(handlers.Handler):
             # try to replace configuration file with new one
             if payload_format == 'vyos_config_file':
                 self.write_file(config_file_path, payload)
+                return
+
+            # use YAML info for installing VyOS
+            if payload_format == 'vyos_config_yaml':
+                self.install_vyos(payload)
+                return
 
             # apply commands to the current configuration file
             elif payload_format == 'vyos_config_commands':
