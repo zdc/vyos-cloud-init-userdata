@@ -5,10 +5,9 @@
 install_drive: auto
 
 # VyOS partition size
-# Can be configured as percent from overall drive size, or in bytes (2000M, 2G). Cannot be less than 2G
-# partition_size: 2000M
-partition_size: 100%
+# By default - all disk but it can be limited (2500M, 2G, etc.). Cannot be less than 2G
+# partition_size: 2500M
 
 # Force reboot after install (true / false)
 # After installation the system will be rebooted
-reboot_after: true
+# reboot_after: true

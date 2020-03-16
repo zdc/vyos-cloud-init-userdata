@@ -131,10 +131,10 @@ class VyOSConfigPartHandler(handlers.Handler):
             logger.error("User-Data payload format cannot be detected")
 
     # run command and return stdout and status
-    def run_command(self, command):
+    def run_command(self, command, stdinput=None):
         try:
-            process = subprocess.Popen(command.split(' '), stdout=subprocess.PIPE, universal_newlines=True)
-            stdout, stderr = process.communicate()
+            process = subprocess.Popen(command.split(' '), stdout=subprocess.PIPE, stdin=subprocess.PIPE, universal_newlines=True)
+            stdout, stderr = process.communicate(stdinput)
             if process.returncode == 0:
                 return stdout
             else:
@@ -159,7 +159,7 @@ class VyOSConfigPartHandler(handlers.Handler):
             # define all variables
             vyos_version = get_version()
             install_drive = install_config['install_drive']
-            partition_size = install_config['partition_size']
+            partition_size = install_config.get('partition_size', '')
             root_drive = '/mnt/wroot'
             root_read = '/mnt/squashfs'
             root_install = '/mnt/inst_root'
@@ -179,19 +179,34 @@ class VyOSConfigPartHandler(handlers.Handler):
                 logger.error("No suitable drive found for installation")
                 return
             logger.debug("Installing to drive: {}".format(install_drive))
-            self.run_command('parted --script {} mklabel msdos'.format(install_drive))
-            self.run_command('parted --script --align optimal {} mkpart primary 0% {}'.format(install_drive, partition_size))
-            logger.debug("Marking first partition on {} as boot".format(install_drive))
-            self.run_command('parted --script {} set 1 boot on'.format(install_drive))
+
+            # Detect system type
+            if Path('/sys/firmware/efi/').exists():
+                sys_type = 'EFI'
+                grub_efi = '--force-extra-removable --efi-directory=/boot/efi --bootloader-id=VyOS --no-uefi-secure-boot '
+            else:
+                sys_type = 'Non-EFI'
+                grub_efi = ''
+            logger.debug("Detected {} system".format(sys_type))
+
+            # Create partitions
+            if sys_type == 'EFI':
+                disk_parts = 'label: gpt\n,100M,U,*\n,{},L'.format(partition_size)
+            else:
+                disk_parts = 'label: dos\n,{},L,*\n'.format(partition_size)
+            self.run_command('sfdisk -q -w always -W always {}'.format(install_drive), disk_parts)
 
             partitions_list = self.run_command('lsblk --bytes --list --noheadings --output PATH,SIZE,TYPE {}'.format(install_drive))
             for partition_line in partitions_list.splitlines():
                 found = regex_lsblk.search(partition_line)
                 if int(found.group('dev_size')) > 1900000000 and found.group('dev_type') == 'part':
                     root_partition = found.group('dev_name')
-                    break
-            logger.debug("Using partition for root: {}".format(root_partition))
-            self.run_command('mkfs -t ext4 -L persistence {}'.format(root_partition))
+                    logger.debug("Using partition for root: {}".format(root_partition))
+                    self.run_command('mkfs -t ext4 -L persistence {}'.format(root_partition))
+                if int(found.group('dev_size')) == 104857600 and found.group('dev_type') == 'part':
+                    efi_partition = found.group('dev_name')
+                    logger.debug("Using partition for EFI: {}".format(efi_partition))
+                    self.run_command('mkfs -t fat -n EFI {}'.format(efi_partition))
 
             # creating directories
             for dir in [root_drive, root_read, root_install]:
@@ -205,6 +220,9 @@ class VyOSConfigPartHandler(handlers.Handler):
                 dirpath = Path(dir)
                 logger.debug("Creating directory: {}".format(dir))
                 dirpath.mkdir(mode=0o755, parents=True, exist_ok=True)
+            if sys_type == 'EFI':
+                Path('/boot/efi').mkdir(mode=0o755, parents=True, exist_ok=True)
+                self.run_command('mount {} {}'.format(efi_partition, '/boot/efi'))
             # copy rootfs
             logger.debug("Copying rootfs: {}/boot/{}/{}.squashfs".format(root_drive, vyos_version, vyos_version))
             self.run_command('cp -p /usr/lib/live/mount/medium/live/filesystem.squashfs {}/boot/{}/{}.squashfs'.format(root_drive, vyos_version, vyos_version))
@@ -228,7 +246,7 @@ class VyOSConfigPartHandler(handlers.Handler):
             self.run_command('cp -p /opt/vyatta/etc/config/.vyatta_config {}/opt/vyatta/etc/config/.vyatta_config'.format(root_install))
             # install grub
             logger.debug("Installing GRUB to {}".format(install_drive))
-            self.run_command('grub-install --no-floppy --recheck --root-directory={} {}'.format(root_drive, install_drive))
+            self.run_command('grub-install --no-floppy --recheck --root-directory={} {}{}'.format(root_drive, grub_efi, install_drive))
             # configure GRUB
             logger.debug("Configuring GRUB")
             self.run_command('/opt/vyatta/sbin/vyatta-grub-setup -u {} {} '' {}'.format(vyos_version, root_partition, root_drive))
@@ -237,7 +255,7 @@ class VyOSConfigPartHandler(handlers.Handler):
                 logger.debug("Unmounting: {}".format(dir))
                 self.run_command('umount {}'.format(dir))
             # reboot the system if this was requested by config
-            if install_config['reboot_after'] is True:
+            if install_config.get('reboot_after', False) is True:
                 logger.info("Rebooting host")
                 self.run_command('systemctl reboot')
 

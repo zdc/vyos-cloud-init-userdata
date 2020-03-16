@@ -15,7 +15,7 @@ set filesys_url ${vyos_boot_url}bootfiles/filesystem.squashfs
 
 # Configure initrd path and common kernel options
 initrd ${initrd_url}
-set kernel_common net.ifnames=0 boot=live nopersistence noautologin union=overlay ip=frommedia fetch=${filesys_url}
+set kernel_common net.ifnames=0 boot=live nopersistence noautologin union=overlay ip=frommedia fetch=${filesys_url} initrd=initrd.img
 # configure Cloud-init datasource and disable network-config (e2NvbmZpZzogZGlzYWJsZWR9Cg== is {config: disabled} encoded with base64)
 iseq ${cloud_init} true && set kernel_common ${kernel_common} network-config=e2NvbmZpZzogZGlzYWJsZWR9Cg== cloud-config-url=${vyos_boot_url}cloud-init/cloud-config ||
 

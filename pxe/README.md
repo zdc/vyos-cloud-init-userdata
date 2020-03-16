@@ -23,7 +23,7 @@ You will need:
      - `vyos-ipxe/cloud-init/vyos-config.txt` - add complete configuration file, commands list or URL to any of them to this file;
  4. Copy to the `vyos-ipxe/bootfiles/` folder all files, required for PXE boot ([check details here](vyos-ipxe/bootfiles/README.md)).
  5. Configure your DHCP server to provide information about boot options inside DHCP answers.
- 6. Copy the `undionly.kpxe` file into the root of your TFTP server. You may get this file from the [official site](http://boot.ipxe.org/undionly.kpxe) or Debian [ipxe package](https://packages.debian.org/buster/ipxe).
+ 6. Copy `undionly.kpxe` and `ipxe.efi` files into the root of your TFTP server. You may get these files from the official site ([undionly.kpxe](http://boot.ipxe.org/undionly.kpxe), [ipxe.efi](http://boot.ipxe.org/ipxe.efi)) or Debian [ipxe package](https://packages.debian.org/buster/ipxe).
 > **Note**
 > An example configuration for dnsmasq, which act as both DHCP and TFTP servers can be found in the `pxe/configs-example/` folder.
 
