@@ -10,6 +10,7 @@ import re
 import requests
 import subprocess
 from pathlib import Path
+from os import sync
 from yaml import load
 from vyos.configtree import ConfigTree
 from vyos.version import get_version
@@ -138,11 +139,10 @@ class VyOSConfigPartHandler(handlers.Handler):
             if process.returncode == 0:
                 return stdout
             else:
-                logger.error("The command \"{}\" returned status {}. Error: {}".format(command, process.returncode, stderr))
-                return None
+                raise Exception("The command \"{}\" returned status {}. Error: {}".format(command, process.returncode, stderr))
         except Exception as err:
             logger.error("Unable to execute command \"{}\": {}".format(command, err))
-            return None
+            raise
 
     # install VyOS
     def install_vyos(self, payload):
@@ -158,6 +158,12 @@ class VyOSConfigPartHandler(handlers.Handler):
 
             # define all variables
             vyos_version = get_version()
+            if vyos_version.startswith('1.2'):
+                vyos_generation = '1.2'
+                rootfspath = '/lib/live/mount/medium/live/filesystem.squashfs'
+            else:
+                vyos_generation = 'other'
+                rootfspath = '/usr/lib/live/mount/medium/live/filesystem.squashfs'
             install_drive = install_config['install_drive']
             partition_size = install_config.get('partition_size', '')
             root_drive = '/mnt/wroot'
@@ -167,14 +173,15 @@ class VyOSConfigPartHandler(handlers.Handler):
             dir_work = '{}/boot/{}/work'.format(root_drive, vyos_version)
 
             # find and prepare drive and partition
-            regex_lsblk = re.compile(r'^(?P<dev_name>/dev/\w+) +(?P<dev_size>\d+) +(?P<dev_type>\w+)$')
             if install_drive == 'auto':
-                drive_list = self.run_command('lsblk --bytes --nodeps --list --noheadings --output PATH,SIZE,TYPE')
+                regex_lsblk = re.compile(r'^(?P<dev_name>\w+) +(?P<dev_size>\d+) +(?P<dev_type>\w+)( +(?P<part_type>[\w-]+))?$')
+                drive_list = self.run_command('lsblk --bytes --nodeps --list --noheadings --output KNAME,SIZE,TYPE')
                 for device_line in drive_list.splitlines():
                     found = regex_lsblk.search(device_line)
-                    if int(found.group('dev_size')) > 2000000000 and found.group('dev_type') == 'disk':
-                        install_drive = found.group('dev_name')
-                        break
+                    if found:
+                        if int(found.group('dev_size')) > 2000000000 and found.group('dev_type') == 'disk':
+                            install_drive = '/dev/{}'.format(found.group('dev_name'))
+                            break
             if install_drive == 'auto':
                 logger.error("No suitable drive found for installation")
                 return
@@ -190,42 +197,68 @@ class VyOSConfigPartHandler(handlers.Handler):
             logger.debug("Detected {} system".format(sys_type))
 
             # Create partitions
-            if sys_type == 'EFI':
-                disk_parts = 'label: gpt\n,100M,U,*\n,{},L'.format(partition_size)
-            else:
-                disk_parts = 'label: dos\n,{},L,*\n'.format(partition_size)
-            self.run_command('sfdisk -q -w always -W always {}'.format(install_drive), disk_parts)
+            logger.debug('Clearing current partitions table on {}'.format(install_drive))
+            with open(install_drive, 'w+b') as drive:
+                drive.seek(0)
+                drive.write(b'0' * 17408)
+                drive.seek(-17408, 2)
+                drive.write(b'0' * 17408)
+            sync()
+            self.run_command('partprobe {}'.format(install_drive))
 
-            partitions_list = self.run_command('lsblk --bytes --list --noheadings --output PATH,SIZE,TYPE {}'.format(install_drive))
+            if vyos_generation == '1.2':
+                if sys_type == 'EFI':
+                    logger.debug('Creating EFI-compatible partitions table on {}'.format(install_drive))
+                    self.run_command('sgdisk -n 1:1M:100M {}'.format(install_drive))
+                    self.run_command('sgdisk -t 1:EF00 {}'.format(install_drive))
+                    self.run_command('sgdisk -n 2::{} {}'.format(partition_size, install_drive))
+                else:
+                    logger.debug('Creating BIOS-compatible partitions table on {}'.format(install_drive))
+                    disk_parts = '3,{},L,*\n'.format(partition_size)
+                    self.run_command('sfdisk -q {}'.format(install_drive), disk_parts)
+            else:
+                if sys_type == 'EFI':
+                    logger.debug('Creating EFI-compatible partitions table on {}'.format(install_drive))
+                    disk_parts = 'label: gpt\n,100M,U,*\n,{},L'.format(partition_size)
+                else:
+                    logger.debug('Creating BIOS-compatible partitions table on {}'.format(install_drive))
+                    disk_parts = 'label: dos\n,{},L,*\n'.format(partition_size)
+                self.run_command('sfdisk -q -w always -W always {}'.format(install_drive), disk_parts)
+            # update partitons in kernel
+            self.run_command('partprobe {}'.format(install_drive))
+
+            partitions_list = self.run_command('fdisk -l {}'.format(install_drive))
+            regex_fdisk = re.compile(r'^(?P<dev_name>/dev/\w+) +(\* +)?(\d+ +)+([\d\.]+\D) +(\d+ +)?(?P<part_type>\w+).*$')
             for partition_line in partitions_list.splitlines():
-                found = regex_lsblk.search(partition_line)
-                if int(found.group('dev_size')) > 1900000000 and found.group('dev_type') == 'part':
-                    root_partition = found.group('dev_name')
-                    logger.debug("Using partition for root: {}".format(root_partition))
-                    self.run_command('mkfs -t ext4 -L persistence {}'.format(root_partition))
-                if int(found.group('dev_size')) == 104857600 and found.group('dev_type') == 'part':
-                    efi_partition = found.group('dev_name')
-                    logger.debug("Using partition for EFI: {}".format(efi_partition))
-                    self.run_command('mkfs -t fat -n EFI {}'.format(efi_partition))
+                found = regex_fdisk.search(partition_line)
+                if found:
+                    if found.group('part_type') == 'Linux':
+                        root_partition = '{}'.format(found.group('dev_name'))
+                        logger.debug("Using partition for root: {}".format(root_partition))
+                        self.run_command('mkfs -t ext4 -L persistence {}'.format(root_partition))
+                    if found.group('part_type') == 'EFI':
+                        efi_partition = '{}'.format(found.group('dev_name'))
+                        logger.debug("Using partition for EFI: {}".format(efi_partition))
+                        self.run_command('mkfs -t fat -n EFI {}'.format(efi_partition))
 
             # creating directories
             for dir in [root_drive, root_read, root_install]:
                 dirpath = Path(dir)
                 logger.debug("Creating directory: {}".format(dir))
-                dirpath.mkdir(mode=0o755, parents=True, exist_ok=True)
+                dirpath.mkdir(mode=0o755, parents=True)
             # mounting root drive
             logger.debug("Mounting root drive: {}".format(root_drive))
             self.run_command('mount {} {}'.format(root_partition, root_drive))
             for dir in [dir_rw, dir_work]:
                 dirpath = Path(dir)
                 logger.debug("Creating directory: {}".format(dir))
-                dirpath.mkdir(mode=0o755, parents=True, exist_ok=True)
+                dirpath.mkdir(mode=0o755, parents=True)
             if sys_type == 'EFI':
-                Path('/boot/efi').mkdir(mode=0o755, parents=True, exist_ok=True)
+                Path('/boot/efi').mkdir(mode=0o755, parents=True)
                 self.run_command('mount {} {}'.format(efi_partition, '/boot/efi'))
             # copy rootfs
             logger.debug("Copying rootfs: {}/boot/{}/{}.squashfs".format(root_drive, vyos_version, vyos_version))
-            self.run_command('cp -p /usr/lib/live/mount/medium/live/filesystem.squashfs {}/boot/{}/{}.squashfs'.format(root_drive, vyos_version, vyos_version))
+            self.run_command('cp -p {} {}/boot/{}/{}.squashfs'.format(rootfspath, root_drive, vyos_version, vyos_version))
             # get list of other files for boot and copy to the installation boot directory
             boot_files = self.run_command('find /boot -maxdepth 1 -type f -o -type l')
             for file in boot_files.splitlines():
