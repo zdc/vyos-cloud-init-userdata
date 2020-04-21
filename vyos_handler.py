@@ -142,11 +142,20 @@ class VyOSConfigPartHandler(handlers.Handler):
         else:
             logger.error("User-Data payload format cannot be detected")
 
-    # run command and return stdout and status
-    def run_command(self, command, stdinput=None):
+    # run command and return stdout
+    def run_command(self, command, stdinput=None, disconnect=False):
         try:
-            process = subprocess.Popen(command.split(' '), stdout=subprocess.PIPE, stdin=subprocess.PIPE, universal_newlines=True)
-            stdout, stderr = process.communicate(stdinput)
+            if disconnect is True:
+                # spawn process and continue
+                process = subprocess.Popen(command.split(' '), universal_newlines=True)
+            else:
+                # communicate with process
+                process = subprocess.Popen(command.split(' '), stdout=subprocess.PIPE, stdin=subprocess.PIPE, universal_newlines=True)
+                stdout, stderr = process.communicate(stdinput)
+
+            # do not return anything if process spawned or return stdout
+            if process.returncode is None:
+                return
             if process.returncode == 0:
                 return stdout
             else:
@@ -191,8 +200,15 @@ class VyOSConfigPartHandler(handlers.Handler):
                     found = regex_lsblk.search(device_line)
                     if found:
                         if int(found.group('dev_size')) > 2000000000 and found.group('dev_type') == 'disk':
-                            install_drive = '/dev/{}'.format(found.group('dev_name'))
-                            break
+                            # check if a device is not mounted
+                            regex_mount = re.compile(r'^(?P<dev_name>\w+) +(?P<mount_point>/.*)$', re.MULTILINE)
+                            drive_details = self.run_command('lsblk --list --noheadings --output KNAME,MOUNTPOINT /dev/{}'.format(found.group('dev_name')))
+                            mount_details = regex_mount.search(drive_details)
+                            if mount_details:
+                                logger.debug("Skipping {}, {} is mounted on {}".format(found.group('dev_name'), mount_details.group('dev_name'), mount_details.group('mount_point')))
+                            else:
+                                install_drive = '/dev/{}'.format(found.group('dev_name'))
+                                break
             if install_drive == 'auto':
                 logger.error("No suitable drive found for installation")
                 return
@@ -294,14 +310,21 @@ class VyOSConfigPartHandler(handlers.Handler):
             # configure GRUB
             logger.debug("Configuring GRUB")
             self.run_command('/opt/vyatta/sbin/vyatta-grub-setup -u {} {} '' {}'.format(vyos_version, root_partition, root_drive))
+            # disable cloud-init if required
+            if install_config.get('cloud_init_disable', False) is True:
+                logger.info("Disabling Cloud-init")
+                self.write_file('{}/etc/cloud/cloud-init.disabled'.format(root_install), 'Disabled by VyOS installer (requested by user)\n')
             # unmount all fs
             for dir in [root_install, root_read, root_drive]:
                 logger.debug("Unmounting: {}".format(dir))
                 self.run_command('umount {}'.format(dir))
             # reboot the system if this was requested by config
-            if install_config.get('reboot_after', False) is True:
+            if install_config.get('after_install', None) == 'reboot':
                 logger.info("Rebooting host")
-                self.run_command('systemctl reboot')
+                self.run_command('systemctl reboot', disconnect=True)
+            if install_config.get('after_install', None) == 'poweroff':
+                logger.info("Powering off host")
+                self.run_command('systemctl poweroff', disconnect=True)
 
         except Exception as err:
             logger.error("Unable to install VyOS: {}".format(err))

@@ -8,6 +8,9 @@ install_drive: auto
 # By default - all disk but it can be limited (2500M, 2G, etc.). Cannot be less than 2G
 # partition_size: 2500M
 
-# Force reboot after install (true / false)
-# After installation the system will be rebooted
-# reboot_after: true
+# Action after install (reboot, poweroff)
+# After installation, a system may be rebooted, powered off or kept running (default)
+# after_install: reboot
+
+# Disable Cloud-init after installation
+cloud_init_disable: true
